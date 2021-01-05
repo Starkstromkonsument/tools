@@ -1,0 +1,183 @@
+#!/bin/bash
+#
+#  netbox-upgrade - simple script for upgrading netbox to new Version
+#
+#  See: https://netbox.readthedocs.io/en/stable/installation/upgrading/#option-a-download-a-release
+#
+#  Copyright (C) 2020-2021 Starkstromkonsument <it@starkstromkonsument.de>
+#
+#  SPDX-License-Identifier: GPL-3.0-or-later
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#  Changelog
+#  =========
+#
+#  * 05.01.2021 - change NETBOXINSTALLDIR to /opt/netbox and NETBOXDIR to /opt/netbox/current
+#               - move backups to NETBOXBACKUPDIR
+#               - add license and changelog
+#
+#  * 29.12.2020 - minor bugfixes
+#
+#  * 01.11.2020 - created
+#
+
+# Variables
+NETBOXINSTALLDIR="/opt/netbox"
+NETBOXDIR="${NETBOXINSTALLDIR}/current"
+NETBOXBACKUPDIR="${NETBOXINSTALLDIR}/backup"
+
+# function to print blue coloured messages
+function msg_blue () {
+    # define colours
+    # See: https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-msg_blue-in-linux
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+
+    # print text
+    printf "\n${BLUE}###\n### $1\n###${NC}\n"
+}
+
+# function to print red coloured messages
+function msg_red () {
+    # define colours
+    # See: https://stackoverflow.com/questions/5947742/how-to-change-the-output-color-of-msg_blue-in-linux
+    RED='\033[0;31m'
+    NC='\033[0m'
+
+    # print text
+    printf "${RED}$1${NC}\n"
+}
+
+
+# Check if run as root
+if ! [ $(id -u) = 0 ]; then
+	msg_red "Please run script as root!"
+	exit 1
+fi
+
+# check currently installed version
+# extract it from a string like "/usr/share/netbox-2.9.8"
+CURRENT=$(readlink ${NETBOXDIR} | sed -r 's/^.+([0-9]+\.[0-9]+\.[0-9]*)$/\1/')
+
+# check latest version
+LATEST=$(curl -Is https://github.com/netbox-community/netbox/releases/latest | grep location | sed -r 's/^.+v([0-9]+\.[0-9]+\.[0-9]+).*$/\1/')
+msg_blue "Currently installed version: ${CURRENT} / Latest version: ${LATEST}"
+
+# Prompt user for new version to upgrade to
+NEWVERSION=""
+while [ -z ${NEWVERSION} ]
+do
+	read -p "Please enter a valid version number to upgrade to (e.g. 2.9.8 or l for latest): " NEWVERSION
+
+	# Test if latest
+	if [ ! -z ${NEWVERSION} ]; then
+	       	if [ ${NEWVERSION} == "l" ]; then
+			NEWVERSION=${LATEST}
+		fi
+	fi
+
+	# Test if valid version number of format x.y.z
+	valid='[0-9]+\.[0-9]+\.[0-9]+'
+	if [[ ! ${NEWVERSION} =~ $valid ]]; then
+		NEWVERSION=""
+	fi
+done
+
+msg_blue "Upgrading to version ${NEWVERSION}"
+
+# set directory for new installation
+NETBOXNEWDIR="${NETBOXDIR}-${NEWVERSION}"
+
+# Download new version
+# DL-Link e.g. https://github.com/netbox-community/netbox/archive/v2.9.8.tar.gz
+FILENAME="v${NEWVERSION}.tar.gz"
+URL="https://github.com/netbox-community/netbox/archive/${FILENAME}"
+msg_blue "downloading new files from \"${URL}\""
+
+wget ${URL} -O /tmp/${FILENAME}
+
+if ! [ -s /tmp/${FILENAME} ]; then
+	msg_red "Download failed!"
+	exit 1
+fi
+
+# extract new version
+msg_blue "extracting new files from \"/tmp/${FILENAME}\" to \"${NETBOXNEWDIR}\"/"
+if [ -d ${NETBOXNEWDIR} ]; then
+	rm -v /tmp/${FILENAME}
+	msg_red "Directory \"${NETBOXNEWDIR}\" already exists. Aborting!"
+	exit 2
+else
+	tar --totals -xzf /tmp/${FILENAME} -C ${NETBOXINSTALLDIR}/
+	rm -v /tmp/${FILENAME}
+fi
+
+# Test if new directory has been created an is not empty
+if [ ! -d ${NETBOXNEWDIR} ]; then
+	msg_red "Extracting new files to \"${NETBOXNEWDIR}\" failed. Aborting!"
+	exit 3
+fi
+
+msg_blue "Creating symlinks to config-files"
+
+# copy config
+ln -sv /etc/netbox/configuration.py ${NETBOXNEWDIR}/netbox/netbox/configuration.py
+
+# copy requirements
+ln -sv /etc/netbox/local_requirements.txt ${NETBOXNEWDIR}/local_requirements.txt
+
+# copy gunicorn config
+ln -sv /etc/netbox/gunicorn.py ${NETBOXNEWDIR}/gunicorn.py
+
+# copy media, scripts and reports
+msg_blue "copying custom/user files to new directory"
+cp -pvr ${NETBOXDIR}/netbox/media/ ${NETBOXNEWDIR}/netbox/
+cp -pvr ${NETBOXDIR}/netbox/scripts/ ${NETBOXNEWDIR}/netbox/
+cp -pvr ${NETBOXDIR}/netbox/reports/ ${NETBOXNEWDIR}/netbox/
+
+# create database backup
+TIMESTAMP=$(date +"%Y%m%d%H%M")
+msg_blue "Dumping database backup to \"${NETBOXBACKUPDIR}/netbox-${CURRENT}-${TIMESTAMP}.psql\""
+
+# Make sure the backup directory exists
+if [ ! -d ${NETBOXBACKUPDIR} ]; then
+	mkdir -v ${NETBOXBACKUPDIR}
+fi
+
+# run the dump
+sudo -u netbox pg_dump netbox > ${NETBOXBACKUPDIR}/netbox-${CURRENT}-${TIMESTAMP}.psql
+
+# test if db-backup has been created and it size > 0
+if [ ! -s ${NETBOXBACKUPDIR}/netbox-${CURRENT}-${TIMESTAMP}.psql ]; then
+	msg_red "Dumping database backup failed. Aborting!"
+	exit 4
+fi
+
+# renew symlink to new version
+msg_blue "pointing symlink to new version"
+rm -v ${NETBOXDIR}
+ln -sfnv ${NETBOXNEWDIR} ${NETBOXDIR}
+
+# run upgrade script
+msg_blue "running upgrade script"
+${NETBOXDIR}/upgrade.sh
+
+# restart services
+msg_blue "restarting services netbox and netbox-rq"
+systemctl restart netbox netbox-rq
+systemctl status netbox netbox-rq
+
+msg_blue "finished!"
