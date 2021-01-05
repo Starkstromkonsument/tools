@@ -1,0 +1,12 @@
+# filetypes
+*.swp
+*.log
+
+# files
+.*_history
+
+# diretories
+.cache/
+cache/
+logs/
+tmp/
