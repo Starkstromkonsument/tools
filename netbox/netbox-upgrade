@@ -25,6 +25,8 @@
 #  Changelog
 #  =========
 #
+#  * 06.01.2021 - fix NETBOXNEWDIR
+#
 #  * 05.01.2021 - change NETBOXINSTALLDIR to /opt/netbox and NETBOXDIR to /opt/netbox/current
 #               - move backups to NETBOXBACKUPDIR
 #               - add license and changelog
@@ -99,7 +101,7 @@ done
 msg_blue "Upgrading to version ${NEWVERSION}"
 
 # set directory for new installation
-NETBOXNEWDIR="${NETBOXDIR}-${NEWVERSION}"
+NETBOXNEWDIR="${NETBOXINSTALLDIR}/netbox-${NEWVERSION}"
 
 # Download new version
 # DL-Link e.g. https://github.com/netbox-community/netbox/archive/v2.9.8.tar.gz
